@@ -473,7 +473,7 @@ public class GameController : MonoBehaviour
         if (isGameOver) { return; }
         WaveHitWithElement((int)nextWaveElement);
         Invoke("InitiateNextWave", timeBetweenWaves);
-        if (timeBetweenWaves > 3) {
+        if (timeBetweenWaves > 3.5f) {
             timeBetweenWaves -= 1.1f;
         }
     }
