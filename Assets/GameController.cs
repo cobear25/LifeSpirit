@@ -10,6 +10,7 @@ public class GameController : MonoBehaviour
     public Sprite windSprite;
     public Sprite stoneSprite;
     public Sprite electricitySprite;
+    public GameObject[] helperOutlines;
 
     public int[,] tileSpots;
     public GameObject tilePrefab;
@@ -18,13 +19,30 @@ public class GameController : MonoBehaviour
     public List<int[]> placedTiles = new List<int[]>{};
     public GameObject spirit;
     public SpriteRenderer spiritTile;
+    public GameObject gameOverPanel;
+
+    public AudioClip gameMusic;
+    public AudioClip fireSound;
+    public AudioClip waterSound;
+    public AudioClip windSound;
+    public AudioClip electricSound;
+    public AudioClip stoneSound;
+    public AudioClip incomingWaveSound;
+    public AudioClip longWaveSound;
 
     public bool introComplete = false;
+    public bool introDialogueComplete = false;
+
+    public float timeBetweenWaves = 10.0f;
+    public float sendWaveDelay = 6.0f;
+
+    bool isGameOver = false;
 
     Element[] availableElements;
     // Start is called before the first frame update
     void Start()
     { 
+        gameOverPanel.SetActive(false);
         spirit.SetActive(false);
         spiritTile.enabled = false;
         tileButtonPanel.SetActive(false);
@@ -88,17 +106,48 @@ public class GameController : MonoBehaviour
         }
     }
 
-    void StartGame() {
-        introComplete = true;
+    public void StartGame() {
+        // restart everything
+        Camera.main.orthographicSize = 12;
+        Camera.main.transform.position = new Vector3(0, 0, -10);
+        introComplete = false;
+        introDialogueComplete = false;
+        gameOverPanel.SetActive(false);
+        placedTiles = new List<int[]> { };
+        tileSpots = new int[100, 100];
+        tileSpots[50, 50] = -1;
+        timeBetweenWaves = 9.0f;
+        sendWaveDelay = 5.0f;
+        spiritTile.GetComponent<Animator>().Play("New State");
+        spirit.GetComponent<Animator>().Play("SpiritToCenter");
+        foreach (TileController tilecontroller in GameObject.FindObjectsOfType<TileController>())
+        {
+            Destroy(tilecontroller.gameObject); 
+        }
+        GetNewElements();
+
+        // start from the beginning with flashing helpers
+        foreach (GameObject helper in helperOutlines)
+        {
+            helper.GetComponent<Animator>().Play("HelpersFlash");
+        }
         GetComponent<DialogueController>().DisplayMessages(new string[] {
             "Drag an element to surround the spirit and keep it safe",
             "Each element will resist a particular force of nature",
             "They will also protect surrounding element tiles",
             "If the spirit is unprotected, all life will die",
-            "A force of nature will not destroy its own element",
-            "And a resisting element will protect itself and its neighbors"
         });
         tileButtonPanel.SetActive(true);
+        Invoke("CompleteIntroDialogue", 23);
+        GetComponent<AudioSource>().clip = gameMusic;
+        GetComponent<AudioSource>().loop = true; 
+        GetComponent<AudioSource>().Play();
+    }
+
+    void CompleteIntroDialogue() {
+        isGameOver = false;
+        introDialogueComplete = true;
+        SendFirstWave();
     }
 
     // Tile spot helper methods
@@ -272,22 +321,25 @@ public class GameController : MonoBehaviour
 
 
     public void WaveHitWithElement(int e) {
-        Debug.Log("at " + NeighborCountAtSpot(50, 50));
+        if (isGameOver) { return; }
+        GetComponent<AudioSource>().PlayOneShot(incomingWaveSound);
         if (NeighborCountAtSpot(50, 50) < 6) {
             SpiritDestroyed();
             return;
         }
+        List<int[]> tilesToRemove = new List<int[]>{};
         Element element = (Element)e;
         Debug.Log("attacking with element: " + element);
         foreach (int[] spot in ExposedSpots()) {
             Element elementAtSpot = (Element)tileSpots[spot[0], spot[1]];
-            if (elementAtSpot == element || element == ElementHelpers.ElementResistedForElement(elementAtSpot)) {
+            if (element == ElementHelpers.ElementResistedForElement(elementAtSpot)) {
                 Debug.Log("safe because I'm: " + elementAtSpot);
             } else {
                 // potentially unsafe, now check neighbors for protection
                 bool isProtected = false;
                 foreach (int[] neighborSpot in NeighborsAtSpot(spot[0], spot[1]))
                 {
+                    // protected next to resisting element
                     if (element == ElementHelpers.ElementResistedForElement((Element)tileSpots[neighborSpot[0], neighborSpot[1]])) {
                         isProtected = true; 
                         break;
@@ -297,15 +349,164 @@ public class GameController : MonoBehaviour
                     // destroy the tile
                     if (TileAtSpot(spot[0], spot[1]) != null) {
                         tileSpots[spot[0], spot[1]] = 0;
-                        placedTiles.Remove(spot);
-                        TileAtSpot(spot[0], spot[1]).Eliminated();
+                        // placedTiles.Remove(spot);
+                        tilesToRemove.Add(spot);
+                        TileAtSpot(spot[0], spot[1]).Eliminated(element);
                     }
+                }
+            }
+        }
+        foreach(int[] t in tilesToRemove) {
+            placedTiles.Remove(t);
+        }
+        // destroy any non-protected tiles that are weak to the element
+        foreach(int[] spot in placedTiles) {
+            Element elementAtSpot = (Element)tileSpots[spot[0], spot[1]];
+            // check if weak to the coming element
+            if (elementAtSpot == ElementHelpers.ElementResistedForElement(element)) {
+                bool isProtected = false;
+                foreach (int[] neighborSpot in NeighborsAtSpot(spot[0], spot[1]))
+                {
+                    // protected next to resisting element
+                    if (element == ElementHelpers.ElementResistedForElement((Element)tileSpots[neighborSpot[0], neighborSpot[1]])) {
+                        isProtected = true; 
+                        break;
+                    }
+                }
+                if (!isProtected) {
+                    // destroy the tile
+                    if (TileAtSpot(spot[0], spot[1]) != null) {
+                        tileSpots[spot[0], spot[1]] = 0;
+                        tilesToRemove.Add(spot);
+                        TileAtSpot(spot[0], spot[1]).Eliminated(element);
+                    }
+                }
+            }
+        }
+        foreach (int[] t in tilesToRemove)
+        {
+            placedTiles.Remove(t);
+        }
+        Invoke("EliminateLoners", 1.0f);
+    }
+
+    public void TilePlaced(int i, int j, Element e) {
+        tileSpots[i, j] = (int)e;
+        placedTiles.Add(new int[] { i, j });
+
+        if (!introComplete && NeighborCountAtSpot(50, 50) == 6) {
+            introComplete = true;
+            foreach (GameObject helper in helperOutlines)
+            {
+                helper.GetComponent<Animator>().Play("HelpersHidden");
+            }
+        }
+        switch (e) {
+            case Element.fire:
+                GetComponent<AudioSource>().PlayOneShot(fireSound);
+                break;
+            case Element.water:
+                GetComponent<AudioSource>().PlayOneShot(waterSound);
+                break;
+            case Element.stone:
+                GetComponent<AudioSource>().PlayOneShot(stoneSound);
+                break;
+            case Element.air:
+                GetComponent<AudioSource>().PlayOneShot(windSound);
+                break;
+            case Element.electricity:
+                GetComponent<AudioSource>().PlayOneShot(electricSound);
+                break;
+        }
+    }
+
+    void SendFirstWave() {
+       GetComponent<DialogueController>().DisplayMessages(new string[] {
+           "A wave of FIRE is incoming, place WATERS to protect the spirit!"
+       }); 
+       Invoke("SendWave", 7);
+    }
+
+    Element nextWaveElement = Element.fire;
+
+    void InitiateNextWave() {
+        if (isGameOver) { return; }
+        nextWaveElement = (Element)Random.Range(1, 6);
+        GetComponent<DialogueController>().DisplayMessages(new string[] {
+           "A wave of " + ElementHelpers.StringForElement(nextWaveElement) + " is incoming! Protect with " + ElementHelpers.StringForElement(ElementHelpers.ElementWeaknessForElement(nextWaveElement))
+        });
+        Invoke("SendWave", sendWaveDelay);
+        if (sendWaveDelay > 2.5f) {
+            sendWaveDelay -= 1.0f;
+        }
+    }
+
+    void SendWave() {
+        if (isGameOver) { return; }
+        switch (nextWaveElement) {
+            case Element.fire:
+                GameObject.Find("FireWave").GetComponent<Animator>().Play("wave");
+                break;
+            case Element.water:
+                GameObject.Find("WaterWave").GetComponent<Animator>().Play("wave");
+                break;
+            case Element.air:
+                GameObject.Find("WindWave").GetComponent<Animator>().Play("wave");
+                break;
+            case Element.stone:
+                GameObject.Find("StoneWave").GetComponent<Animator>().Play("wave");
+                break;
+            case Element.electricity:
+                GameObject.Find("ElectricWave").GetComponent<Animator>().Play("wave");
+                break;
+        }
+        Invoke("PlayWaveSound", 1);
+        Invoke("ApplyWaveEffects", 4);
+    }
+
+    void PlayWaveSound() {
+        if (isGameOver) { return; }
+        GetComponent<AudioSource>().PlayOneShot(longWaveSound);
+    }
+
+    void ApplyWaveEffects() {
+        if (isGameOver) { return; }
+        WaveHitWithElement((int)nextWaveElement);
+        Invoke("InitiateNextWave", timeBetweenWaves);
+        if (timeBetweenWaves > 3) {
+            timeBetweenWaves -= 1.1f;
+        }
+    }
+
+    void EliminateLoners() {
+        foreach (int[] spot in ExposedSpots()) {
+            if (NeighborCountAtSpot(spot[0], spot[1]) == 0) {
+                if (TileAtSpot(spot[0], spot[1]) != null)
+                {
+                    tileSpots[spot[0], spot[1]] = 0;
+                    placedTiles.Remove(spot);
+                    TileAtSpot(spot[0], spot[1]).Eliminated(nextWaveElement);
                 }
             }
         }
     }
 
     void SpiritDestroyed() {
-        Debug.Log("Game over!");
+        GetComponent<DialogueController>().DisplayMessages(new string[] {
+           "You have failed to protect the Life Spirit, it will now fade away to nothingness..."
+        });
+        spiritTile.GetComponent<Animator>().Play("CenterTileFade");
+        spirit.GetComponent<Animator>().Play("SpiritFadeAway");
+        Invoke("ShowGameOver", 5.5f);
+        isGameOver = true;
+        foreach (TileController tilecontroller in GameObject.FindObjectsOfType<TileController>())
+        {
+            tilecontroller.Eliminated(Element.spirit);
+            Destroy(tilecontroller.gameObject); 
+        }
+    }
+
+    void ShowGameOver() {
+        gameOverPanel.SetActive(true);
     }
 }

@@ -1,6 +1,7 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using System.Linq;
 
 public class TileController : MonoBehaviour
 {
@@ -44,8 +45,8 @@ public class TileController : MonoBehaviour
             {
                 selected = true;
                 Camera.main.GetComponent<CameraController>().canDrag = false;
-                prevSortingOrder = GetComponent<SpriteRenderer>().sortingOrder;
-                GetComponent<SpriteRenderer>().sortingOrder = 100;
+                // prevSortingOrder = GetComponent<SpriteRenderer>().sortingOrder;
+                // GetComponent<SpriteRenderer>().sortingOrder = 10;
                 grabDif = cursorPos - cardPos;
                 touchDownTime = Time.time;
                 touchDownPosition = cursorPos;
@@ -55,15 +56,20 @@ public class TileController : MonoBehaviour
         {
             if (selected)
             {
-                Invoke("RestoreSortingOrder", 0.2f);
+                // Invoke("RestoreSortingOrder", 0.2f);
                 for (int i = 0; i <= 100; i++) {
                     for (int j = 0; j <= 100; j++)
                     {
                         Vector2 tileSpot = gameController.PositionForSpot(i, j);
                         if (sprite.bounds.Contains(tileSpot) && gameController.tileSpots[i, j] == 0 && gameController.SpotHasNeighbor(i, j)) {
+                            // if the game is in intro mode, only allow placing next to the center tile
+                            List<int[]> neighbors = gameController.NeighborsAtSpot(i, j);
+                            bool containsCenter = neighbors.Any(p => p.SequenceEqual(new int[] {50, 50}));
+                            if (!gameController.introComplete && !containsCenter) {
+                                break;
+                            }
                             transform.position = tileSpot;
-                            gameController.tileSpots[i, j] = (int)element;
-                            gameController.placedTiles.Add(new int[]{i, j});
+                            gameController.TilePlaced(i, j, element);
                             inPlace = true;
                             gameController.GetNewElements();
                         }
@@ -90,7 +96,7 @@ public class TileController : MonoBehaviour
     }
 
     void RestoreSortingOrder() {
-        GetComponent<SpriteRenderer>().sortingOrder = prevSortingOrder;
+        GetComponent<SpriteRenderer>().sortingOrder = 1;
     }
 
     public void SetElement(Element e) {
@@ -116,8 +122,10 @@ public class TileController : MonoBehaviour
         }
     }
 
-    public void Eliminated() {
-        Destroy(gameObject);
+    public void Eliminated(Element e) {
+        GetComponent<SpriteRenderer>().color = ElementHelpers.ColorFor(e);
+        GetComponent<Animator>().Play("KillTile");
+        Destroy(gameObject, 0.8f);
     }
 }
 
@@ -155,13 +163,53 @@ public struct ElementHelpers {
             case Element.water:
                 return Element.fire;
             case Element.air:
-                return Element.water;
+                return Element.stone;
             case Element.stone:
                 return Element.electricity;
+            case Element.electricity:
+                return Element.water;
+            default:
+                return Element.spirit;
+        } 
+    }
+
+    public static Element ElementWeaknessForElement(Element element)
+    {
+        switch (element)
+        {
+            case Element.spirit:
+                return Element.spirit;
+            case Element.fire:
+                return Element.water;
+            case Element.water:
+                return Element.electricity;
+            case Element.air:
+                return Element.fire;
+            case Element.stone:
+                return Element.air;
             case Element.electricity:
                 return Element.stone;
             default:
                 return Element.spirit;
+        }
+    }
+
+    public static string StringForElement(Element element) {
+        switch (element) {
+            case Element.spirit:
+                return "SPIRIT";
+            case Element.fire:
+                return "FIRE";
+            case Element.water:
+                return "WATER";
+            case Element.air:
+                return "WIND";
+            case Element.stone:
+                return "STONE";
+            case Element.electricity:
+                return "ELECTRICITY";
+            default:
+                return "SPIRIT";
         } 
     }
 }

@@ -38,10 +38,10 @@ public class DialogueController : MonoBehaviour
         dialogueText.text = "";
         dialogueText.text = messages[messageIndex];
         dialogueText.CrossFadeAlpha(1.0f, 3.0f, true);
-        Invoke("FadeOutMessage", 2.5f);
+        Invoke("FadeOutMessage", 3.0f);
         messageIndex++;
         if (messageIndex < messages.Length) {
-            Invoke("DisplayMessage", 5);
+            Invoke("DisplayMessage", 5.5f);
         }
     }
 
